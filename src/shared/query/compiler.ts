@@ -1462,14 +1462,7 @@ const compileRelationOrder = <Schema extends AnySchema, Meta>(
 
 	for (const nestedKey in value) {
 		const column = target.columns[nestedKey];
-		if (column)
-			pushOrder(
-				clauses,
-				context.dialect,
-				select(aliasedTableColumn(column, alias)),
-				value[nestedKey],
-			);
-		else
+		if (!column)
 			compileRelationOrder(
 				context,
 				target,
@@ -1479,6 +1472,13 @@ const compileRelationOrder = <Schema extends AnySchema, Meta>(
 				depth + 1,
 				select,
 				clauses,
+			);
+		else if (value[nestedKey] !== undefined)
+			pushOrder(
+				clauses,
+				context.dialect,
+				select(aliasedTableColumn(column, alias)),
+				value[nestedKey],
 			);
 	}
 };

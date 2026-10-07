@@ -270,6 +270,20 @@ describe('orderBy relation fields', () => {
 		expect(statements[0]?.sql).toContain('__better_order_0');
 	});
 
+	test('skips undefined relation sort fields at every depth', async () => {
+		const db = createDb();
+		for (const orderBy of [
+			{ author: undefined },
+			{ author: { name: undefined } },
+			{ author: { profile: { bio: undefined } } },
+		]) {
+			const { statements } = await db.posts
+				.findMany({ orderBy })
+				.explain();
+			expect(statements[0]?.sql).not.toContain('order by');
+		}
+	});
+
 	test('prepares reads with relation sorts', async () => {
 		const db = createDb();
 		const statement = db.posts
