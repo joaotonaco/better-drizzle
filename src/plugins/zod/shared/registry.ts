@@ -159,6 +159,8 @@ export const createZodSchemasRegistry = <Schema extends AnySchema>(
 				create: createSchema,
 				orderBy: createOrderBySchema(
 					Object.keys(selectShape),
+					relationMeta,
+					registry,
 					behavior,
 				),
 				pagination: z.object({}),

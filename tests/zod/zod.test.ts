@@ -198,6 +198,85 @@ describe('better-drizzle/zod - PostgreSQL bigint schemas', () => {
 	});
 });
 
+describe('better-drizzle/zod - strict relation orderBy schemas', () => {
+	test('accepts many-to-many counts and keeps strict unknown keys', () => {
+		const users = pgTable('zod_order_users', {
+			id: integer().primaryKey(),
+			name: text().notNull(),
+		});
+		const groups = pgTable('zod_order_groups', {
+			id: integer().primaryKey(),
+			name: text().notNull(),
+		});
+		const members = pgTable('zod_order_members', {
+			groupId: integer().notNull(),
+			userId: integer().notNull(),
+		});
+		const registry = createZodSchemasRegistry(
+			defineRelations({ groups, members, users }, (r) => ({
+				groups: {
+					users: r.many.users({
+						from: r.groups.id.through(r.members.groupId),
+						to: r.users.id.through(r.members.userId),
+					}),
+				},
+				members: {
+					user: r.one.users({
+						from: r.members.userId,
+						to: r.users.id,
+					}),
+				},
+				users: {
+					groups: r.many.groups(),
+				},
+			})),
+			{ behavior: { unknownKeys: 'strict' } },
+		);
+		const orderBy = (table: string) =>
+			registry.get(table)?.schemas.orderBy as z.ZodTypeAny;
+		const query = registry.getQueryArgsSchema('groups');
+
+		expect(
+			orderBy('users').safeParse([
+				{ groups: { _count: 'desc' } },
+				{ id: 'asc' },
+			]).success,
+		).toBe(true);
+		expect(
+			orderBy('members').safeParse({
+				user: { name: { direction: 'asc', nulls: 'first' } },
+			}).success,
+		).toBe(true);
+		expect(
+			query.safeParse({
+				include: {
+					users: { orderBy: { groups: { _count: 'asc' } } },
+				},
+				orderBy: { users: { _count: 'desc' } },
+			}).success,
+		).toBe(true);
+
+		expect(
+			orderBy('users').safeParse({
+				groups: { _count: 'desc', name: 'asc' },
+			}).success,
+		).toBe(false);
+		expect(
+			orderBy('members').safeParse({
+				user: { name: 'asc', bogus: 'asc' },
+			}).success,
+		).toBe(false);
+		expect(
+			orderBy('members').safeParse({ user: { _count: 'asc' } }).success,
+		).toBe(false);
+		expect(
+			query.safeParse({
+				include: { users: { orderBy: { groups: { name: 'asc' } } } },
+			}).success,
+		).toBe(false);
+	});
+});
+
 describe('better-drizzle/zod - typing', () => {
 	test('exposes typed $zod schemas on delegates', () => {
 		const ctx = createZodContext();
@@ -365,6 +444,67 @@ describe('better-drizzle/zod - generated schemas', () => {
 		expect(() =>
 			ctx.client.users.$zod.orderBy.parse({ id: { nulls: 'last' } }),
 		).toThrow();
+		ctx.close();
+	});
+
+	test('orderBy schema accepts relation sorts', async () => {
+		const ctx = createZodContext();
+
+		expect(
+			ctx.client.posts.$zod.orderBy.parse([
+				{ author: { name: 'desc' } },
+				{ id: 'asc' },
+			]),
+		).toEqual([{ author: { name: 'desc' } }, { id: 'asc' }]);
+		expect(
+			ctx.client.comments.$zod.orderBy.parse({
+				post: {
+					author: { age: { direction: 'desc', nulls: 'last' } },
+				},
+			}),
+		).toEqual({
+			post: { author: { age: { direction: 'desc', nulls: 'last' } } },
+		});
+		expect(
+			ctx.client.users.$zod.orderBy.parse({ posts: { _count: 'desc' } }),
+		).toEqual({ posts: { _count: 'desc' } });
+
+		const posts = await ctx.client.posts.findMany({
+			orderBy: [{ author: { name: 'desc' } }, { id: 'asc' }],
+			select: { id: true },
+		});
+		expect(posts.map((post) => post.id)).toEqual([6, 5, 3, 4, 1, 2]);
+
+		const users = await ctx.client.users.findMany({
+			orderBy: [{ posts: { _count: 'asc' } }, { id: 'asc' }],
+			select: { id: true },
+		});
+		expect(users.map((user) => user.id)).toEqual([5, 3, 4, 1, 2]);
+		ctx.close();
+	});
+
+	test('orderBy schema rejects invalid relation sorts', () => {
+		const ctx = createZodContext();
+		const posts = ctx.client.posts.$zod.orderBy;
+		const users = ctx.client.users.$zod.orderBy;
+
+		expect(users.safeParse({ posts: { title: 'asc' } }).success).toBe(
+			false,
+		);
+		expect(users.safeParse({ posts: 'desc' }).success).toBe(false);
+		expect(users.safeParse({ posts: { _count: 'sideways' } }).success).toBe(
+			false,
+		);
+		expect(posts.safeParse({ author: { _count: 'asc' } }).success).toBe(
+			false,
+		);
+		expect(posts.safeParse({ author: 'asc' }).success).toBe(false);
+		expect(posts.safeParse({ author: [{ name: 'asc' }] }).success).toBe(
+			false,
+		);
+		expect(
+			posts.safeParse({ author: { name: { direction: 'up' } } }).success,
+		).toBe(false);
 		ctx.close();
 	});
 

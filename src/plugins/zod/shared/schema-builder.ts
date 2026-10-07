@@ -22,9 +22,10 @@ export type TableSchemaEntry = {
 };
 
 export type TableRegistry = Map<string, TableSchemaEntry>;
+type OrderBySchema = z.ZodUnion<[z.ZodObject, z.ZodArray<z.ZodObject>]>;
 export type RuntimeZodModelSchemas = {
 	create: z.ZodObject;
-	orderBy: z.ZodTypeAny;
+	orderBy: OrderBySchema;
 	pagination: z.ZodObject;
 	query: z.ZodObject;
 	select: z.ZodObject;
@@ -497,8 +498,10 @@ const createScalarWhereSchema = (columnSchema: z.ZodTypeAny) => {
 
 export const createOrderBySchema = (
 	scalarKeys: string[],
+	relations: Record<string, RelationMeta>,
+	registry: TableRegistry,
 	behavior: ZodPluginBehavior | undefined,
-) => {
+): OrderBySchema => {
 	const shape: Record<string, z.ZodTypeAny> = Object.create(null);
 	const direction = z.enum(['asc', 'desc']);
 	const sortConfig = applyUnknownKeys(
@@ -511,6 +514,21 @@ export const createOrderBySchema = (
 
 	for (const key of scalarKeys)
 		shape[key] = z.union([direction, sortConfig]).optional();
+
+	// Targets register later in the same loop, so one relations resolve lazily.
+	// `_count` is rejected even when unknown keys are stripped.
+	for (const [relationName, relation] of Object.entries(relations))
+		shape[relationName] = (
+			relation.isMany
+				? applyUnknownKeys(z.object({ _count: direction }), behavior)
+				: z.lazy(() =>
+						(
+							registry.get(relation.tableName) as TableSchemaEntry
+						).schemas.orderBy.options[0].extend({
+							_count: z.never().optional(),
+						}),
+					)
+		).optional();
 
 	const objectSchema = applyUnknownKeys(z.object(shape), behavior);
 	return z.union([objectSchema, z.array(objectSchema)]);
