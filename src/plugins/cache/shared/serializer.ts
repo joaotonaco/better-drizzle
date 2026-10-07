@@ -169,7 +169,8 @@ function canonicalText(
 	for (const key of keys) {
 		if (record[key] === undefined) continue;
 		let childMode: typeof mode = 'value';
-		if (mode === 'ordered' || mode === 'where') childMode = 'ordered';
+		if (mode === 'ordered' || mode === 'where' || mode === 'orderBy')
+			childMode = 'ordered';
 		else if (mode === 'relations') childMode = 'query';
 		else if (mode === 'query') {
 			if (key === 'where') childMode = 'where';
