@@ -275,6 +275,50 @@ describe('better-drizzle/zod - strict relation orderBy schemas', () => {
 			}).success,
 		).toBe(false);
 	});
+
+	const orderRelations = () => {
+		const authors = pgTable('zod_sort_authors', {
+			id: integer().primaryKey(),
+			name: text().notNull(),
+		});
+		const books = pgTable('zod_sort_books', {
+			authorId: integer().notNull(),
+			id: integer().primaryKey(),
+		});
+		return defineRelations({ authors, books }, (r) => ({
+			books: {
+				author: r.one.authors({
+					from: r.books.authorId,
+					to: r.authors.id,
+				}),
+			},
+		}));
+	};
+	const lazyAuthorSort = (
+		registry: ReturnType<typeof createZodSchemasRegistry>,
+	) =>
+		(
+			registry.get('books')!.schemas.orderBy.options[0].shape
+				.author as z.ZodOptional<z.ZodLazy<z.ZodTypeAny>>
+		).unwrap();
+
+	test('builds a one relation sort schema once', () => {
+		const author = lazyAuthorSort(
+			createZodSchemasRegistry(orderRelations(), {}),
+		);
+		expect(author._def.getter()).toBe(author._def.getter());
+	});
+
+	test('names the table when a relation sort target is missing', () => {
+		const { authors: _authors, ...relations } = orderRelations();
+		const registry = createZodSchemasRegistry(
+			relations as unknown as ReturnType<typeof orderRelations>,
+			{},
+		);
+		expect(() => lazyAuthorSort(registry)._def.getter()).toThrow(
+			'Missing zod schema entry for table "authors".',
+		);
+	});
 });
 
 describe('better-drizzle/zod - typing', () => {
@@ -1033,6 +1077,35 @@ describe('better-drizzle/zod - query arg validation', () => {
 		});
 
 		expect(page.pagination.type).toBe('cursor');
+		expect(page.data.length).toBe(2);
+		ctx.close();
+	});
+
+	test('cursor args reject relation sorts, even when stripping unknown keys', async () => {
+		const ctx = createZodContext();
+
+		await expect(
+			Promise.resolve(
+				ctx.client.posts.cursor({
+					limit: 2,
+					orderBy: [{ author: { name: 'asc' } }, { id: 'asc' }],
+				}),
+			),
+		).rejects.toThrow('Zod validation failed for cursor args');
+		await expect(
+			Promise.resolve(
+				ctx.client.users.cursor({
+					limit: 2,
+					orderBy: { posts: { _count: 'desc' } },
+				}),
+			),
+		).rejects.toThrow('Zod validation failed for cursor args');
+
+		const page = await ctx.client.users.cursor({
+			include: { posts: { orderBy: { author: { name: 'asc' } } } },
+			limit: 2,
+			orderBy: { id: 'asc' },
+		});
 		expect(page.data.length).toBe(2);
 		ctx.close();
 	});
